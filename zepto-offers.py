@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 
 STORAGE_STATE_FILE = "zepto_session.json"
 OUTPUT_FILE = "zepto_coupons.json"
-WAIT_TIMEOUT_SECONDS = 180
+WAIT_TIMEOUT_SECONDS = 5
 
 
 def extract_coupons(response_data):
