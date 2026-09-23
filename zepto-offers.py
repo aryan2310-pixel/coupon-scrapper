@@ -1,164 +1,254 @@
 import json
-import threading
 from pathlib import Path
-
 from playwright.sync_api import sync_playwright
 
+ZEPTO_URL = "https://www.zeptonow.com/"
 STORAGE_STATE_FILE = "zepto_session.json"
 OUTPUT_FILE = "zepto_coupons.json"
-WAIT_TIMEOUT_SECONDS = 5
 
+def extract_coupons(coupon_response):
 
-def extract_coupons(response_data):
     coupons = []
 
-    widgets = response_data.get("pageLayout", {}).get("widgets", [])
+    widgets = (coupon_response.get("pageLayout", {}).get("widgets", []))
 
     for widget in widgets:
 
         if widget.get("widgetType") != "COUPON_CARD_WIDGET":
             continue
 
-        items = widget.get("data", {}).get("items", {})
+        data = widget.get("data", {})
+        items = data.get("items", {})
 
         heading = items.get("heading", {})
-        coupon_button = items.get("couponButton", {})
+        title = heading.get("text", "")
 
-        action = coupon_button.get("action", {})
-        action_meta = action.get("actionMeta", {})
+        coupon_button = items.get("couponButton")
 
-        coupon_code = action_meta.get("couponCode")
-        title = heading.get("text")
+        if coupon_button:
 
-        state = coupon_button.get("state")
+            action = coupon_button.get("action", {})
+            action_meta = action.get("actionMeta", {})
+
+            code = action_meta.get("couponCode", "")
+
+            state = coupon_button.get("state", "")
+
+        else:
+
+            coupon_code_block = items.get("couponCode", {})
+            coupon_code_text = coupon_code_block.get("text", "")
+
+            if "auto-applied" in coupon_code_text.lower():
+                code = ""
+                state = "Auto-applied"
+            else:
+                code = coupon_code_text
+                state = ""
 
         subheading = items.get("subheading", {})
-        unlock_message = subheading.get("text")
+        unlock_message = subheading.get("text", "")
 
         terms = items.get("termsAndConditions", {})
-        description = terms.get("description")
+        details = terms.get("description", "")
 
         coupons.append({
-            "coupon_code": coupon_code,
             "title": title,
+            "code": code,
             "state": state,
             "unlock_message": unlock_message,
-            "description": description
+            "details": details
         })
 
     return coupons
 
 
-def is_coupon_response(response):
-    if "fetch-list" not in response.url:
-        return False
-
-    if "application/json" not in response.headers.get("content-type", ""):
-        return False
-
-    try:
-        data = response.json()
-    except Exception:
-        return False
-
-    page_type = data.get("pageLayout", {}).get("pageMeta", {}).get("pageType")
-    return page_type == "COUPON"
-
-
 def print_coupons(coupons):
+
     print("\n")
-    print("=" * 70)
+    print("=" * 60)
     print("CURRENT ZEPTO OFFERS")
-    print("=" * 70)
+    print("=" * 60)
+
+    if not coupons:
+        print("No coupons found.")
+        return
 
     for index, coupon in enumerate(coupons, start=1):
 
         print(f"\n{index}. {coupon['title']}")
 
-        if coupon["coupon_code"]:
-            print(f"   Coupon Code : {coupon['coupon_code']}")
+        if coupon["code"]:
+            print(f"Code: {coupon['code']}")
 
         if coupon["state"]:
-            print(f"   Status      : {coupon['state']}")
+            print(f"State: {coupon['state']}")
 
         if coupon["unlock_message"]:
-            print(f"   Requirement : {coupon['unlock_message']}")
+            print(f"Unlock Message : {coupon['unlock_message']}")
 
-        if coupon["description"]:
-            print(f"   Details     : {coupon['description']}")
+        if coupon["details"]:
+            print(f"Details: {coupon['details']}")
 
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 60)
+
+
+def save_coupons(coupons):
+
+    with open(OUTPUT_FILE,"w",encoding="utf-8") as file:
+
+        json.dump(coupons,file,indent=4,ensure_ascii=False)
+
+    print(f"\nCoupons saved to {OUTPUT_FILE}")
 
 
 def main():
 
-    coupon_response = None
-    captured_event = threading.Event()
-
-    session_path = Path(STORAGE_STATE_FILE)
-    has_session = session_path.exists() and session_path.stat().st_size > 0
-
     with sync_playwright() as playwright:
+
+        session_path = Path(STORAGE_STATE_FILE)
+
+        has_session = (session_path.exists() and session_path.stat().st_size > 0)
 
         browser = playwright.chromium.launch(headless=False)
 
         context = browser.new_context(
-            storage_state=STORAGE_STATE_FILE if has_session else None
+            storage_state=STORAGE_STATE_FILE
+            if has_session
+            else None
         )
 
         page = context.new_page()
 
-        def handle_response(response):
-            nonlocal coupon_response
+        # --------------------------------------------------
+        # OPEN ZEPTO
+        # --------------------------------------------------
 
-            if not is_coupon_response(response):
+        print("\nOpening Zepto...")
+
+        page.goto(ZEPTO_URL,wait_until="domcontentloaded")
+
+        print("\nZepto opened.")
+
+        print("\nIf required, log in to your Zepto account.")
+
+        input("\nPress Enter when you are ready to continue...")
+
+        # --------------------------------------------------
+        # ADD FIRST PRODUCT TO CART
+        # --------------------------------------------------
+
+        print("\n" + "-" * 60)
+        print("ADDING FIRST PRODUCT TO CART")
+        print("-" * 60)
+
+        try:
+
+            add_button = page.locator('button[data-mode="edlp"]:has-text("ADD")').first
+
+            print("\nWaiting for first ADD button...")
+
+            add_button.wait_for(state="visible",timeout=30000)
+
+            print("First ADD button found.")
+
+            add_button.click()
+
+            print("Product added to cart.")
+
+        except Exception as error:
+
+            print("\nCould not add product to cart.")
+            print("Error:", error)
+
+            browser.close()
+            return
+
+        # --------------------------------------------------
+        # OPEN CART + CAPTURE CART RESPONSE
+        # --------------------------------------------------
+
+        print("\n" + "-" * 60)
+        print("OPENING CART")
+        print("-" * 60)
+
+        try:
+
+                # Give the ADD request a moment to finish
+                page.wait_for_timeout(1500)
+
+                print("\nClicking Cart...")
+
+                # Adjust this selector if Zepto changes its cart UI.
+                page.locator('button[aria-label="Cart"][data-testid="cart-btn"]').first.click()
+
+        except Exception as error:
+
+            print("\nCould not capture the cart response.")
+
+            print("Error:", error)
+
+            browser.close()
+            return
+
+        # --------------------------------------------------
+        # FETCH COUPONS
+        # --------------------------------------------------
+
+        print("\n" + "-" * 60)
+        print("FETCHING COUPONS")
+        print("-" * 60)
+
+        def is_coupon_response(response):
+
+            return ("coupons/fetch-list" in response.url.lower())
+
+        try:
+
+            with page.expect_response(is_coupon_response,timeout=15000) as coupon_response_info:
+
+                page.get_by_text("View coupons",exact=True).click()
+
+            coupon_api_response = (coupon_response_info.value)
+
+            print("\nCoupon fetch-list status:",coupon_api_response.status)
+
+            if not coupon_api_response.ok:
+
+                print("Coupon fetch-list request failed.")
+
+                print(coupon_api_response.text()[:2000])
+
+                browser.close()
                 return
 
-            try:
-                coupon_response = response.json()
-                print("\nCoupon API response captured!")
-                captured_event.set()
-            except Exception:
-                pass
+            coupon_response = (coupon_api_response.json())
 
-        page.on("response", handle_response)
+        except Exception as error:
 
-        print("Opening Zepto...")
+            print("\nError while fetching coupons:",error)
 
-        page.goto("https://www.zeptonow.com/", wait_until="domcontentloaded")
+            print("\nTip: make sure the Cart page with the View coupons row is visible.")
+            browser.close()
+            return
 
-        print("\nBrowser opened.")
+        # --------------------------------------------------
+        # EXTRACT COUPONS
+        # --------------------------------------------------
 
-        if not has_session:
-            print("Log in to Zepto (your session will be saved for next time).")
-        else:
-            print("Log in if prompted (your saved session may still be valid).")
+        coupons = extract_coupons(coupon_response)
 
-        # No timeout here - takes as long as you need to log in
-        input("\nPress Enter once you're logged in and ready to open Coupons... ")
+        print_coupons(coupons)
 
-        print("Now open Cart → Coupons & Offers → Coupons.")
-        print(f"Waiting up to {WAIT_TIMEOUT_SECONDS}s for the coupon API response...")
+        save_coupons(coupons)
 
-        # Returns as soon as the response is captured, instead of always
-        # blocking for the full timeout
-        captured_event.wait(timeout=WAIT_TIMEOUT_SECONDS)
+        # --------------------------------------------------
+        # SAVE SESSION
+        # --------------------------------------------------
 
-        # Save session so you skip the manual login step next run
         context.storage_state(path=STORAGE_STATE_FILE)
 
-        if coupon_response is None:
-            print("\nCould not find the coupon fetch-list response.")
-            print("Make sure you opened the Coupons page.")
-        else:
-            coupons = extract_coupons(coupon_response)
-            print_coupons(coupons)
-
-            Path(OUTPUT_FILE).write_text(json.dumps(coupons, indent=2))
-            print(f"\nSaved to {OUTPUT_FILE}")
-
-        print("\nPress Enter to close the browser...")
-        input()
+        input("\nPress Enter to close the browser...")
 
         browser.close()
 
