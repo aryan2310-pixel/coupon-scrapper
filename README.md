@@ -3,6 +3,8 @@
 <h3>Directions to use:- </h3>
 <ol>
   <li>clone the repository in your pc</li>
+  <li>pip install playwright</li>
+  <li>playwright install chromium</li>
   <li>run the python script file </li>
   <li>it will open zepto in browser (chromium)</li>
   <li>login your account on zepto </li>
