@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 ZEPTO_URL = "https://www.zeptonow.com/"
 STORAGE_STATE_FILE = "zepto_session.json"
@@ -110,15 +111,26 @@ def main():
 
         has_session = (session_path.exists() and session_path.stat().st_size > 0)
 
-        browser = playwright.chromium.launch(headless=False)
-
-        context = browser.new_context(
-            storage_state=STORAGE_STATE_FILE
-            if has_session
-            else None
+        HEADLESS_MODE = False  # Set to False so Playwright doesn't inject '--headless'
+        browser = playwright.chromium.launch(
+            headless=HEADLESS_MODE,
+            args=[
+                "--headless=new",  # Use Chrome's new native headless mode!
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
 
+        context_options = {
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "viewport": {"width": 1920, "height": 1080}
+        }
+        if has_session:
+            context_options["storage_state"] = STORAGE_STATE_FILE
+
+        context = browser.new_context(**context_options)
+
         page = context.new_page()
+        Stealth().apply_stealth_sync(page)
 
         # --------------------------------------------------
         # OPEN ZEPTO
@@ -130,9 +142,11 @@ def main():
 
         print("\nZepto opened.")
 
-        print("\nIf required, log in to your Zepto account.")
-
-        input("\nPress Enter when you are ready to continue...")
+        if not HEADLESS_MODE:
+            print("\nIf required, log in to your Zepto account.")
+            input("\nPress Enter when you are ready to continue...")
+        else:
+            print("\nRunning in headless mode. Bypassing manual login prompt (relying on zepto_session.json)...")
 
         # --------------------------------------------------
         # ADD FIRST PRODUCT TO CART
@@ -160,6 +174,9 @@ def main():
 
             print("\nCould not add product to cart.")
             print("Error:", error)
+            
+            page.screenshot(path="debug_headless_error.png")
+            print("Saved debug screenshot to debug_headless_error.png")
 
             browser.close()
             return
@@ -247,8 +264,9 @@ def main():
         # --------------------------------------------------
 
         context.storage_state(path=STORAGE_STATE_FILE)
-
-        input("\nPress Enter to close the browser...")
+        
+        if not HEADLESS_MODE:
+            input("\nPress Enter to close the browser...")
 
         browser.close()
 
